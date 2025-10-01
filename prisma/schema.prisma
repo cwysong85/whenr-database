@@ -1,249 +1,408 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Whenr Database Schema
+// Group event coordination with calendar integration
 
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider  = "postgresql"
-    url       = env("DATABASE_URL")
-    directUrl = env("DIRECT_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
-model Account {
-    id                String  @id @default(cuid())
-    userId            String
-    type              String
-    provider          String
-    providerAccountId String
-    refresh_token     String? @db.Text
-    access_token      String? @db.Text
-    expires_at        Int?
-    token_type        String?
-    scope             String?
-    id_token          String? @db.Text
-    session_state     String?
-
-    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    @@unique([provider, providerAccountId])
-    @@map("accounts")
-}
-
-model Session {
-    id           String   @id @default(cuid())
-    sessionToken String   @unique
-    userId       String
-    expires      DateTime
-    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    @@map("sessions")
-}
-
+// User Management
 model User {
-    id            String    @id @default(cuid())
-    name          String?
-    email         String    @unique
-    emailVerified DateTime?
-    image         String?
-    password      String?
-    createdAt     DateTime  @default(now())
-    updatedAt     DateTime  @updatedAt
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  password      String? // For credentials authentication
+  emailVerified DateTime? // For NextAuth.js
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-    accounts Account[]
-    sessions Session[]
+  // Authentication
+  accounts Account[]
+  sessions Session[]
 
-    // User preferences
-    preferences UserPreference?
+  // Group memberships
+  groupMemberships GroupMember[]
 
-    // Group memberships
-    groupMemberships GroupMember[]
+  // Groups created by user
+  createdGroups Group[] @relation("GroupCreator")
 
-    // Group activities
-    groupActivities GroupActivity[]
+  // Calendar connections
+  calendarConnections CalendarConnection[]
 
-    // Chat messages
-    chatMessages ChatMessage[]
+  // Event proposals
+  eventProposals EventProposal[]
 
-    // Event proposals
-    eventProposals EventProposal[]
+  // Event votes
+  eventVotes EventVote[]
 
-    // Event votes
-    eventVotes EventVote[]
+  // Chat messages
+  chatMessages ChatMessage[]
 
-    // Group invites (as inviter)
-    groupInvites GroupInvite[]
+  // Group activities
+  groupActivities GroupActivity[]
 
-    @@map("users")
+  // Group invites
+  sentInvites     GroupInvite[] @relation("GroupInviteInviter")
+  receivedInvites GroupInvite[] @relation("GroupInviteUser")
+
+  // Preferences
+  preferences UserPreference?
+
+  @@map("users")
 }
 
-model UserPreference {
-    id        String   @id @default(cuid())
-    userId    String   @unique
-    theme     String   @default("system") // "light", "dark", "system"
-    timezone  String   @default("UTC")
-    language  String   @default("en")
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+// NextAuth.js Account model
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
 
-    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    @@map("user_preferences")
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
 }
 
+// NextAuth.js Session model
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// NextAuth.js Verification Token model
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// Group Management
 model Group {
-    id          String   @id @default(cuid())
-    name        String
-    description String?
-    isPrivate   Boolean  @default(false)
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  inviteCode  String   @unique @default(cuid())
+  isPrivate   Boolean  @default(false)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-    // Icon configuration
-    iconType     String? // "emoji" or "image"
-    iconEmoji    String? // Unicode emoji character
-    iconImageUrl String? // URL to uploaded image
+  // Icon fields
+  iconType     GroupIconType @default(EMOJI)
+  iconEmoji    String? // For emoji icons
+  iconImageUrl String? // For uploaded images
 
-    // Relationships
-    members        GroupMember[]
-    activities     GroupActivity[]
-    chatMessages   ChatMessage[]
-    invites        GroupInvite[]
-    eventProposals EventProposal[]
+  // Relations
+  createdByUser  User            @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  members        GroupMember[]
+  eventProposals EventProposal[]
+  chatMessages   ChatMessage[]
+  activities     GroupActivity[]
+  invites        GroupInvite[]
 
-    @@map("groups")
+  @@map("groups")
 }
 
 model GroupMember {
-    id       String   @id @default(cuid())
-    groupId  String
-    userId   String
-    role     String   @default("MEMBER") // "ADMIN", "MEMBER"
-    joinedAt DateTime @default(now())
+  id       String    @id @default(cuid())
+  groupId  String
+  userId   String
+  role     GroupRole @default(MEMBER)
+  joinedAt DateTime  @default(now())
 
-    group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-    user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Relations
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    @@unique([groupId, userId])
-    @@map("group_members")
+  @@unique([groupId, userId])
+  @@map("group_members")
 }
 
-model GroupActivity {
-    id           String   @id @default(cuid())
-    groupId      String
-    userId       String
-    activityType String // "MEMBER_JOINED", "MEMBER_LEFT", "GROUP_CREATED", "GROUP_UPDATED", "EVENT_CREATED"
-    title        String
-    description  String?
-    createdAt    DateTime @default(now())
-
-    group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-    user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    @@map("group_activities")
+enum GroupRole {
+  ADMIN
+  MEMBER
 }
 
-model GroupInvite {
-    id        String    @id @default(cuid())
-    groupId   String
-    inviterId String
-    email     String
-    code      String    @unique
-    expiresAt DateTime
-    createdAt DateTime  @default(now())
-    usedAt    DateTime?
-
-    group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-    inviter User  @relation(fields: [inviterId], references: [id], onDelete: Cascade)
-
-    @@map("group_invites")
+enum GroupIconType {
+  EMOJI
+  IMAGE
 }
 
-model ChatMessage {
-    id        String   @id @default(cuid())
-    groupId   String
-    userId    String
-    content   String
-    createdAt DateTime @default(now())
-
-    group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-    user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    @@map("chat_messages")
-}
-
-model EventProposal {
-    id          String    @id @default(cuid())
-    groupId     String
-    proposerId  String
-    title       String
-    description String?
-    eventDate   DateTime?
-    location    String?
-    createdAt   DateTime  @default(now())
-    updatedAt   DateTime  @updatedAt
-
-    group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-    proposer User  @relation(fields: [proposerId], references: [id], onDelete: Cascade)
-
-    votes EventVote[]
-
-    @@map("event_proposals")
-}
-
-model EventVote {
-    id         String   @id @default(cuid())
-    proposalId String
-    userId     String
-    vote       String // "YES", "NO", "MAYBE"
-    createdAt  DateTime @default(now())
-
-    proposal EventProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
-    user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    @@unique([proposalId, userId])
-    @@map("event_votes")
-}
-
-model CachedEvent {
-    id          String   @id @default(cuid())
-    externalId  String   @unique
-    title       String
-    description String?
-    date        DateTime
-    location    String?
-    imageUrl    String?
-    source      String // "ticketmaster", "eventbrite", etc.
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
-
-    @@map("cached_events")
-}
-
-// Future: Calendar Integration Models
+// Calendar Integration
 model CalendarConnection {
-    id           String    @id @default(cuid())
-    userId       String
-    provider     String // "google", "microsoft", "apple"
-    accessToken  String
-    refreshToken String?
-    expiresAt    DateTime?
-    createdAt    DateTime  @default(now())
-    updatedAt    DateTime  @updatedAt
+  id           String           @id @default(cuid())
+  userId       String
+  provider     CalendarProvider
+  providerId   String
+  name         String? // User-friendly name for the connection
+  accessToken  String           @db.Text
+  refreshToken String?          @db.Text
+  expiresAt    DateTime?
+  isActive     Boolean          @default(true)
+  lastSyncAt   DateTime? // Last time calendars were synced
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
 
-    @@unique([userId, provider])
-    @@map("calendar_connections")
+  // Relations
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  calendars SharedCalendar[]
+
+  @@unique([userId, provider, providerId])
+  @@map("calendar_connections")
+}
+
+enum CalendarProvider {
+  GOOGLE
+  MICROSOFT
+  APPLE
 }
 
 model SharedCalendar {
-    id        String   @id @default(cuid())
-    userId    String
-    name      String
-    isShared  Boolean  @default(false)
-    shareCode String?  @unique
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+  id                 String     @id @default(cuid())
+  connectionId       String
+  providerCalendarId String
+  name               String
+  color              String? // Calendar color for UI display
+  isShared           Boolean    @default(false)
+  shareLevel         ShareLevel @default(BUSY_ONLY)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
 
-    @@map("shared_calendars")
+  // Relations
+  connection CalendarConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, providerCalendarId])
+  @@map("shared_calendars")
+}
+
+enum ShareLevel {
+  BUSY_ONLY
+  DETAILED
+  FULL_ACCESS
+}
+
+// Event Discovery & Caching
+model CachedEvent {
+  id          String      @id @default(cuid())
+  source      EventSource
+  sourceId    String // External API event ID
+  title       String
+  description String?     @db.Text
+  startDate   DateTime
+  endDate     DateTime?
+  location    String?
+  venue       String?
+  imageUrl    String?
+  sourceUrl   String
+  price       String?
+  category    String?
+  tags        String[] // Array of tags/categories
+  isActive    Boolean     @default(true)
+  lastFetched DateTime    @default(now())
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  proposals EventProposal[]
+
+  @@unique([source, sourceId])
+  @@map("cached_events")
+}
+
+// Event Management
+model EventProposal {
+  id            String         @id @default(cuid())
+  groupId       String
+  proposerId    String
+  cachedEventId String? // Reference to cached event if from external API
+  title         String
+  description   String?
+  startDate     DateTime
+  endDate       DateTime
+  location      String?
+  source        EventSource
+  sourceId      String? // ID from external API (Eventbrite, etc.) - deprecated, use cachedEventId
+  sourceUrl     String? // URL to original event - deprecated, use cachedEventId
+  status        ProposalStatus @default(PENDING)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  // Relations
+  group        Group         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  proposer     User          @relation(fields: [proposerId], references: [id], onDelete: Cascade)
+  cachedEvent  CachedEvent?  @relation(fields: [cachedEventId], references: [id], onDelete: SetNull)
+  votes        EventVote[]
+  chatMessages ChatMessage[]
+
+  @@map("event_proposals")
+}
+
+enum EventSource {
+  MANUAL
+  EVENTBRITE
+  TICKETMASTER
+  MEETUP
+}
+
+enum ProposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model EventVote {
+  id         String   @id @default(cuid())
+  proposalId String
+  userId     String
+  vote       VoteType
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  proposal EventProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, userId])
+  @@map("event_votes")
+}
+
+enum VoteType {
+  YES
+  NO
+  MAYBE
+}
+
+// Chat System
+model ChatMessage {
+  id          String      @id @default(cuid())
+  groupId     String?
+  proposalId  String?
+  userId      String
+  content     String      @db.Text
+  messageType MessageType @default(TEXT)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  group    Group?         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  proposal EventProposal? @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("chat_messages")
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+}
+
+// Group Activity Feed
+model GroupActivity {
+  id           String       @id @default(cuid())
+  groupId      String
+  userId       String?
+  activityType ActivityType
+  title        String
+  description  String?      @db.Text
+  metadata     Json? // Store additional data like event details, member info, etc.
+  createdAt    DateTime     @default(now())
+
+  // Relations
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("group_activities")
+}
+
+enum ActivityType {
+  GROUP_CREATED
+  MEMBER_JOINED
+  MEMBER_LEFT
+  EVENT_PROPOSED
+  EVENT_APPROVED
+  EVENT_CANCELLED
+  GROUP_UPDATED
+}
+
+// Group Invites
+model GroupInvite {
+  id           String    @id @default(cuid())
+  groupId      String
+  invitedBy    String // User ID who created the invite
+  invitedEmail String // Email address of the person being invited
+  inviteCode   String    @unique @default(cuid())
+  expiresAt    DateTime
+  isUsed       Boolean   @default(false)
+  usedAt       DateTime?
+  usedBy       String? // User ID who used the invite
+  createdAt    DateTime  @default(now())
+
+  // Relations
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  inviter User  @relation("GroupInviteInviter", fields: [invitedBy], references: [id], onDelete: Cascade)
+  user    User? @relation("GroupInviteUser", fields: [usedBy], references: [id], onDelete: SetNull)
+
+  @@map("group_invites")
+}
+
+// User Preferences
+model UserPreference {
+  id                 String          @id @default(cuid())
+  userId             String          @unique
+  theme              ThemePreference @default(SYSTEM)
+  emailNotifications Boolean         @default(true)
+  eventReminders     Boolean         @default(true)
+  weeklyDigest       Boolean         @default(false)
+  timezone           String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+enum ThemePreference {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+// Beta Signup Management
+model BetaSignup {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("beta_signups")
 }
