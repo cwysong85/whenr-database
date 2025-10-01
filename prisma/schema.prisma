@@ -1,0 +1,249 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider  = "postgresql"
+    url       = env("DATABASE_URL")
+    directUrl = env("DIRECT_URL")
+}
+
+model Account {
+    id                String  @id @default(cuid())
+    userId            String
+    type              String
+    provider          String
+    providerAccountId String
+    refresh_token     String? @db.Text
+    access_token      String? @db.Text
+    expires_at        Int?
+    token_type        String?
+    scope             String?
+    id_token          String? @db.Text
+    session_state     String?
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([provider, providerAccountId])
+    @@map("accounts")
+}
+
+model Session {
+    id           String   @id @default(cuid())
+    sessionToken String   @unique
+    userId       String
+    expires      DateTime
+    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("sessions")
+}
+
+model User {
+    id            String    @id @default(cuid())
+    name          String?
+    email         String    @unique
+    emailVerified DateTime?
+    image         String?
+    password      String?
+    createdAt     DateTime  @default(now())
+    updatedAt     DateTime  @updatedAt
+
+    accounts Account[]
+    sessions Session[]
+
+    // User preferences
+    preferences UserPreference?
+
+    // Group memberships
+    groupMemberships GroupMember[]
+
+    // Group activities
+    groupActivities GroupActivity[]
+
+    // Chat messages
+    chatMessages ChatMessage[]
+
+    // Event proposals
+    eventProposals EventProposal[]
+
+    // Event votes
+    eventVotes EventVote[]
+
+    // Group invites (as inviter)
+    groupInvites GroupInvite[]
+
+    @@map("users")
+}
+
+model UserPreference {
+    id        String   @id @default(cuid())
+    userId    String   @unique
+    theme     String   @default("system") // "light", "dark", "system"
+    timezone  String   @default("UTC")
+    language  String   @default("en")
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("user_preferences")
+}
+
+model Group {
+    id          String   @id @default(cuid())
+    name        String
+    description String?
+    isPrivate   Boolean  @default(false)
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    // Icon configuration
+    iconType     String? // "emoji" or "image"
+    iconEmoji    String? // Unicode emoji character
+    iconImageUrl String? // URL to uploaded image
+
+    // Relationships
+    members        GroupMember[]
+    activities     GroupActivity[]
+    chatMessages   ChatMessage[]
+    invites        GroupInvite[]
+    eventProposals EventProposal[]
+
+    @@map("groups")
+}
+
+model GroupMember {
+    id       String   @id @default(cuid())
+    groupId  String
+    userId   String
+    role     String   @default("MEMBER") // "ADMIN", "MEMBER"
+    joinedAt DateTime @default(now())
+
+    group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([groupId, userId])
+    @@map("group_members")
+}
+
+model GroupActivity {
+    id           String   @id @default(cuid())
+    groupId      String
+    userId       String
+    activityType String // "MEMBER_JOINED", "MEMBER_LEFT", "GROUP_CREATED", "GROUP_UPDATED", "EVENT_CREATED"
+    title        String
+    description  String?
+    createdAt    DateTime @default(now())
+
+    group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("group_activities")
+}
+
+model GroupInvite {
+    id        String    @id @default(cuid())
+    groupId   String
+    inviterId String
+    email     String
+    code      String    @unique
+    expiresAt DateTime
+    createdAt DateTime  @default(now())
+    usedAt    DateTime?
+
+    group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    inviter User  @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+    @@map("group_invites")
+}
+
+model ChatMessage {
+    id        String   @id @default(cuid())
+    groupId   String
+    userId    String
+    content   String
+    createdAt DateTime @default(now())
+
+    group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("chat_messages")
+}
+
+model EventProposal {
+    id          String    @id @default(cuid())
+    groupId     String
+    proposerId  String
+    title       String
+    description String?
+    eventDate   DateTime?
+    location    String?
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+
+    group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    proposer User  @relation(fields: [proposerId], references: [id], onDelete: Cascade)
+
+    votes EventVote[]
+
+    @@map("event_proposals")
+}
+
+model EventVote {
+    id         String   @id @default(cuid())
+    proposalId String
+    userId     String
+    vote       String // "YES", "NO", "MAYBE"
+    createdAt  DateTime @default(now())
+
+    proposal EventProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+    user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([proposalId, userId])
+    @@map("event_votes")
+}
+
+model CachedEvent {
+    id          String   @id @default(cuid())
+    externalId  String   @unique
+    title       String
+    description String?
+    date        DateTime
+    location    String?
+    imageUrl    String?
+    source      String // "ticketmaster", "eventbrite", etc.
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    @@map("cached_events")
+}
+
+// Future: Calendar Integration Models
+model CalendarConnection {
+    id           String    @id @default(cuid())
+    userId       String
+    provider     String // "google", "microsoft", "apple"
+    accessToken  String
+    refreshToken String?
+    expiresAt    DateTime?
+    createdAt    DateTime  @default(now())
+    updatedAt    DateTime  @updatedAt
+
+    @@unique([userId, provider])
+    @@map("calendar_connections")
+}
+
+model SharedCalendar {
+    id        String   @id @default(cuid())
+    userId    String
+    name      String
+    isShared  Boolean  @default(false)
+    shareCode String?  @unique
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@map("shared_calendars")
+}
