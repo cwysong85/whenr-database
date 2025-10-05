@@ -298,14 +298,16 @@ enum VoteType {
 
 // Chat System
 model ChatMessage {
-    id          String      @id @default(cuid())
-    groupId     String?
-    proposalId  String?
-    userId      String
-    content     String      @db.Text
-    messageType MessageType @default(TEXT)
-    createdAt   DateTime    @default(now())
-    updatedAt   DateTime    @updatedAt
+    id            String      @id @default(cuid())
+    /// Optional Ably message id for idempotency across webhook retries
+    ablyMessageId String?     @unique
+    groupId       String?
+    proposalId    String?
+    userId        String
+    content       String      @db.Text
+    messageType   MessageType @default(TEXT)
+    createdAt     DateTime    @default(now())
+    updatedAt     DateTime    @updatedAt
 
     // Relations
     group    Group?         @relation(fields: [groupId], references: [id], onDelete: Cascade)
