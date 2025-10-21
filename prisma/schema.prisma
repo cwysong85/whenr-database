@@ -54,6 +54,10 @@ model User {
     // Preferences
     preferences UserPreference?
 
+    // Event likes and search history (for algorithm)
+    eventLikes    EventLike[]
+    searchHistory SearchHistory[]
+
     @@map("users")
 }
 
@@ -397,6 +401,49 @@ enum ThemePreference {
     SYSTEM
 }
 
+// Event Likes (for user preferences and algorithm)
+model EventLike {
+    id          String           @id @default(cuid())
+    userId      String
+    eventSource LikedEventSource
+    sourceId    String // External event ID (from Ticketmaster API or wc_events table)
+    eventData   Json // Snapshot of event data (title, date, location, imageUrl, category, etc.)
+    createdAt   DateTime         @default(now())
+
+    // Relations
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    // Indexes for fast lookups
+    @@unique([userId, eventSource, sourceId]) // Prevent duplicate likes
+    @@index([userId]) // Fast lookup of user's likes
+    @@index([eventSource, sourceId]) // Fast lookup by event
+    @@index([createdAt]) // For sorting by recent likes
+    @@map("event_likes")
+}
+
+enum LikedEventSource {
+    TICKETMASTER // Event from Ticketmaster API
+    WEBCRAWLER // Event from wc_events table
+}
+
+// Search History (for user preferences and algorithm - 45-day retention)
+model SearchHistory {
+    id          String   @id @default(cuid())
+    userId      String
+    query       String? // Text search query (nullable for location-only searches)
+    filters     Json // JSON object storing all search parameters (near, radiusMiles, startMin, startMax, category, priceMin, priceMax, sort)
+    resultCount Int      @default(0) // Number of results returned
+    createdAt   DateTime @default(now())
+
+    // Relations
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    // Indexes for fast lookups
+    @@index([userId, createdAt]) // Fast lookup of user's search history sorted by date
+    @@index([createdAt]) // For cleanup queries (deleting old searches > 45 days)
+    @@map("search_history")
+}
+
 // Beta Signup Management
 model BetaSignup {
     id        String   @id @default(cuid())
@@ -407,4 +454,108 @@ model BetaSignup {
     updatedAt DateTime @updatedAt
 
     @@map("beta_signups")
+}
+
+// ============================================================================
+// WEB CRAWLER TABLES (Managed externally - DO NOT DROP)
+// ============================================================================
+// These tables are managed by the web crawler service and contain production data.
+// They are defined here so Prisma is aware of them and won't try to drop them.
+
+model WebCrawlerVenue {
+    id            BigInt                                @id @default(autoincrement())
+    name          String?
+    streetAddress String?                               @map("street_address")
+    locality      String?
+    region        String?
+    postalCode    String?                               @map("postal_code")
+    country       String?
+    lat           Float?
+    lon           Float?
+    createdAt     DateTime                              @default(now()) @map("created_at")
+    location      Unsupported("geography(Point,4326)")? // PostGIS geography type
+    searchVector  Unsupported("tsvector")?              @map("search_vector")
+
+    // Relations
+    events WebCrawlerEvent[]
+
+    // Indexes
+    @@unique([name, locality, region, postalCode, country])
+    @@index([location], type: Gist)
+    @@index([searchVector], type: Gin)
+    @@index([lat, lon])
+    @@map("wc_venues")
+}
+
+model WebCrawlerEvent {
+    id           String                   @id
+    source       String
+    sourceId     String?                  @map("source_id")
+    sourceUrl    String                   @unique @map("source_url")
+    title        String
+    description  String?
+    startAt      DateTime?                @map("start_at")
+    endAt        DateTime?                @map("end_at")
+    timezone     String?
+    status       String?
+    venueId      BigInt?                  @map("venue_id")
+    images       Json?
+    categories   String[]
+    performers   Json?
+    createdAt    DateTime                 @default(now()) @map("created_at")
+    updatedAt    DateTime                 @default(now()) @map("updated_at")
+    searchVector Unsupported("tsvector")? @map("search_vector")
+
+    // Relations
+    venue  WebCrawlerVenue?  @relation(fields: [venueId], references: [id], onDelete: SetNull)
+    offers WebCrawlerOffer[]
+
+    // Indexes
+    @@index([sourceUrl])
+    @@index([startAt])
+    @@index([venueId])
+    @@index([searchVector], type: Gin)
+    @@map("wc_events")
+}
+
+model WebCrawlerOffer {
+    id           BigInt    @id @default(autoincrement())
+    eventId      String?   @map("event_id")
+    url          String?
+    price        Decimal?  @db.Decimal
+    currency     String?
+    availability String?
+    validFrom    DateTime? @map("valid_from")
+    checkedAt    DateTime? @default(now()) @map("checked_at")
+
+    // Relations
+    event WebCrawlerEvent? @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+    // Indexes
+    @@index([eventId])
+    @@map("wc_offers")
+}
+
+model WebCrawlerPage {
+    url          String    @id
+    discoveredAt DateTime  @default(now()) @map("discovered_at")
+    lastChecked  DateTime? @map("last_checked")
+    etag         String?
+    lastModified DateTime? @map("last_modified")
+    status       Int?
+    country      String?
+    lat          Float?
+    lon          Float?
+
+    // Indexes
+    @@index([lastChecked])
+    @@map("wc_pages")
+}
+
+model WebCrawlerSitemapPart {
+    loc       String    @id
+    lastmod   DateTime?
+    fetchedAt DateTime? @map("fetched_at")
+
+    @@map("wc_sitemap_parts")
 }
