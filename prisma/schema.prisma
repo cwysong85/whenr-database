@@ -51,6 +51,9 @@ model User {
     sentInvites     GroupInvite[] @relation("GroupInviteInviter")
     receivedInvites GroupInvite[] @relation("GroupInviteUser")
 
+    // Group read states
+    groupReadStates GroupReadState[]
+
     // Preferences
     preferences UserPreference?
 
@@ -123,12 +126,13 @@ model Group {
     iconImageUrl String? // For uploaded images
 
     // Relations
-    createdByUser  User            @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+    createdByUser  User             @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
     members        GroupMember[]
     eventProposals EventProposal[]
     chatMessages   ChatMessage[]
     activities     GroupActivity[]
     invites        GroupInvite[]
+    readStates     GroupReadState[]
 
     @@map("groups")
 }
@@ -378,6 +382,26 @@ model GroupInvite {
     user    User? @relation("GroupInviteUser", fields: [usedBy], references: [id], onDelete: SetNull)
 
     @@map("group_invites")
+}
+
+// Group Read State (tracks when user last read each group)
+model GroupReadState {
+    id                String   @id @default(cuid())
+    userId            String
+    groupId           String
+    lastReadAt        DateTime @default(now())
+    lastReadMessageId String? // Optional: specific message ID they read up to
+    updatedAt         DateTime @updatedAt
+
+    // Relations
+    user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+    group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+    // Ensure one read state per user per group
+    @@unique([userId, groupId])
+    @@index([userId]) // Fast lookup of user's read states
+    @@index([groupId]) // Fast lookup by group
+    @@map("group_read_states")
 }
 
 // User Preferences
