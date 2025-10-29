@@ -536,7 +536,7 @@ model WebCrawlerVenue {
     lat           Float?
     lon           Float?
     createdAt     DateTime                              @default(now()) @map("created_at")
-    location      Unsupported("geography(Point,4326)")? // PostGIS geography type
+    location      Unsupported("gis.geography(Point,4326)")? // PostGIS geography type
     searchVector  Unsupported("tsvector")?              @map("search_vector")
 
     // Relations
