@@ -64,6 +64,21 @@ model User {
     // Personalized feed cache
     userFeed UserFeed?
 
+    // Planner relations
+    ownedPlans              Plan[]                     @relation("PlanOwner")
+    planMemberships         PlanMember[]
+    planInvites             PlanInvite[]
+    ownedThreads            PlanThread[]               @relation("ThreadOwner")
+    createdThreads          PlanThread[]               @relation("ThreadCreatedBy")
+    searchInitiatedThreads  PlanThread[]               @relation("ThreadSearchInitiator")
+    votingInitiatedThreads  PlanThread[]               @relation("ThreadVotingInitiator")
+    planComments            PlanComment[]
+    searchSnapshotInitiator PlanThreadSearchSnapshot[]
+    planThreadItemVotes     PlanThreadItemVote[]
+    selectedPlanItems       PlanThreadSelectedItem[]
+    itineraryItems          PlanThreadItineraryItem[]
+    planChatMessages        PlanChatMessage[]
+
     @@map("users")
 }
 
@@ -434,6 +449,88 @@ enum ThemePreference {
     SYSTEM
 }
 
+// Planner Enums
+enum PlanRole {
+    OWNER
+    EDITOR
+    VIEWER
+}
+
+enum EventPlanSource {
+    TICKETMASTER
+    WEBCRAWLER
+    MANUAL
+}
+
+enum EventPlanStatus {
+    SCHEDULED
+    CANCELLED
+    RAIN_DELAY
+    POSTPONED
+    RESCHEDULED
+    UNKNOWN
+}
+
+enum PlanThreadStatus {
+    OPEN
+    IN_PROGRESS
+    DONE
+}
+
+enum SearchProvider {
+    SERPAPI
+    GOOGLE_CSE
+    OPENAI_TOOLS
+    PERPLEXITY
+    CUSTOM
+}
+
+enum SearchStatus {
+    PENDING
+    SUCCESS
+    ERROR
+    PARTIAL
+}
+
+enum VotingStatus {
+    NOT_READY
+    READY
+    IN_PROGRESS
+    COMPLETE
+}
+
+enum ConfirmationStatus {
+    PENDING
+    CONFIRMED
+    CANCELLED
+}
+
+enum ThreadItemVoteType {
+    SELECT
+    REMOVE
+}
+
+enum ItineraryItemType {
+    FROM_SEARCH
+    MANUAL
+    HOTEL
+    RESTAURANT
+    ACTIVITY
+    TRANSPORTATION
+}
+
+enum ItineraryStatus {
+    PLANNED
+    BOOKED
+    CONFIRMED
+    CANCELLED
+}
+
+enum PlanChatSenderType {
+    USER
+    AI
+}
+
 // Event Likes (for user preferences and algorithm)
 model EventLike {
     id          String           @id @default(cuid())
@@ -507,6 +604,280 @@ model UserFeed {
     @@map("user_feeds")
 }
 
+// ============================================================================
+// PLANNER MODELS
+// ============================================================================
+
+// Core Plan
+model Plan {
+    id               String          @id @default(cuid())
+    ownerId          String
+    title            String
+    description      String?
+    // Event snapshot (stable even if upstream changes)
+    eventSource      EventPlanSource
+    eventSourceId    String? // External id (Ticketmaster ID or wc_events.id string)
+    eventSourceUrl   String? // Original source URL
+    eventTitle       String
+    eventDescription String?         @db.Text
+    eventStatus      EventPlanStatus @default(SCHEDULED)
+    venueName        String?
+    venueAddress     String?
+    venueCity        String?
+    venueRegion      String?
+    venueCountry     String?
+    venueLat         Float?
+    venueLon         Float?
+    startAt          DateTime?
+    endAt            DateTime?
+    createdAt        DateTime        @default(now())
+    updatedAt        DateTime        @updatedAt
+
+    // Relations
+    owner        User              @relation("PlanOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+    members      PlanMember[]
+    invites      PlanInvite[]
+    threads      PlanThread[]
+    chatMessages PlanChatMessage[]
+
+    @@index([ownerId])
+    @@index([eventSource, eventSourceId])
+    @@map("plans")
+}
+
+model PlanMember {
+    id        String   @id @default(cuid())
+    planId    String
+    userId    String
+    role      PlanRole @default(VIEWER)
+    createdAt DateTime @default(now())
+
+    plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([planId, userId])
+    @@index([userId])
+    @@map("plan_members")
+}
+
+model PlanInvite {
+    id        String    @id @default(cuid())
+    planId    String
+    email     String
+    role      PlanRole  @default(EDITOR)
+    code      String    @unique
+    expiresAt DateTime
+    isUsed    Boolean   @default(false)
+    usedAt    DateTime?
+    usedBy    String?
+    createdAt DateTime  @default(now())
+
+    plan       Plan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+    usedByUser User? @relation(fields: [usedBy], references: [id], onDelete: SetNull)
+
+    @@index([planId])
+    @@index([email])
+    @@map("plan_invites")
+}
+
+// Plan-level AI chat (user chats with AI to help set up threads)
+model PlanChatMessage {
+    id         String             @id @default(cuid())
+    planId     String
+    userId     String? // null if sender is AI
+    senderType PlanChatSenderType
+    content    String             @db.Text
+    metadata   Json? // Store AI intent/thread suggestions, etc.
+    createdAt  DateTime           @default(now())
+
+    plan Plan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+    user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([planId, createdAt])
+    @@index([userId])
+    @@map("plan_chat_messages")
+}
+
+// Threads (legs) with optional nesting
+model PlanThread {
+    id             String           @id @default(cuid())
+    planId         String
+    parentThreadId String?
+    title          String
+    description    String?
+    position       Int              @default(0)
+    status         PlanThreadStatus @default(OPEN)
+
+    // Ownership + workflow
+    threadOwnerId     String
+    searchStatus      SearchStatus @default(PENDING)
+    votingStatus      VotingStatus @default(NOT_READY)
+    searchInitiatedBy String?
+    votingInitiatedBy String?
+    searchInitiatedAt DateTime?
+    votingInitiatedAt DateTime?
+
+    createdBy String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    plan            Plan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+    parent          PlanThread?  @relation("ThreadHierarchy", fields: [parentThreadId], references: [id], onDelete: Cascade)
+    children        PlanThread[] @relation("ThreadHierarchy")
+    owner           User         @relation("ThreadOwner", fields: [threadOwnerId], references: [id], onDelete: Cascade)
+    createdByUser   User         @relation("ThreadCreatedBy", fields: [createdBy], references: [id], onDelete: Cascade)
+    searchInitiator User?        @relation("ThreadSearchInitiator", fields: [searchInitiatedBy], references: [id], onDelete: SetNull)
+    votingInitiator User?        @relation("ThreadVotingInitiator", fields: [votingInitiatedBy], references: [id], onDelete: SetNull)
+
+    comments        PlanComment[]
+    searchSnapshots PlanThreadSearchSnapshot[]
+    searchItems     PlanThreadSearchItem[]
+    selectedItem    PlanThreadSelectedItem?
+    itineraryItems  PlanThreadItineraryItem[]
+
+    @@index([planId])
+    @@index([parentThreadId])
+    @@index([position])
+    @@map("plan_threads")
+}
+
+model PlanComment {
+    id            String   @id @default(cuid())
+    /// Optional Ably message id for idempotency across webhook retries
+    ablyMessageId String?  @unique
+    threadId      String
+    userId        String
+    content       String   @db.Text
+    createdAt     DateTime @default(now())
+
+    thread PlanThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+    user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([threadId])
+    @@index([userId])
+    @@map("plan_comments")
+}
+
+// AI/Web search snapshots per thread (immutable snapshots for audit/refresh)
+model PlanThreadSearchSnapshot {
+    id           String         @id @default(cuid())
+    threadId     String
+    queryText    String
+    provider     SearchProvider
+    status       SearchStatus   @default(PENDING)
+    resultsJson  Json
+    metaJson     Json?
+    errorMessage String?
+    dedupeKey    String?        @unique
+    initiatedBy  String
+    createdAt    DateTime       @default(now())
+    refreshedAt  DateTime?
+    expiresAt    DateTime?
+
+    thread    PlanThread             @relation(fields: [threadId], references: [id], onDelete: Cascade)
+    initiator User                   @relation(fields: [initiatedBy], references: [id], onDelete: Cascade)
+    items     PlanThreadSearchItem[]
+
+    @@index([threadId])
+    @@index([provider, createdAt])
+    @@map("plan_thread_search_snapshots")
+}
+
+// Normalized items derived from snapshot for finer UI/analytics
+model PlanThreadSearchItem {
+    id         String   @id @default(cuid())
+    snapshotId String
+    threadId   String
+    url        String?
+    title      String?
+    snippet    String?
+    sourceName String?
+    sourceIcon String?
+    rank       Int?
+    score      Float?
+    price      Decimal?
+    currency   String?
+    location   String?
+    rawJson    Json
+    createdAt  DateTime @default(now())
+
+    snapshot   PlanThreadSearchSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+    thread     PlanThread               @relation(fields: [threadId], references: [id], onDelete: Cascade)
+    votes      PlanThreadItemVote[]
+    selectedBy PlanThreadSelectedItem?
+
+    @@index([snapshotId])
+    @@index([threadId])
+    @@index([url])
+    @@map("plan_thread_search_items")
+}
+
+model PlanThreadItemVote {
+    id                 String             @id @default(cuid())
+    threadSearchItemId String
+    userId             String
+    voteType           ThreadItemVoteType @default(SELECT)
+    createdAt          DateTime           @default(now())
+
+    item PlanThreadSearchItem @relation(fields: [threadSearchItemId], references: [id], onDelete: Cascade)
+    user User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([threadSearchItemId, userId])
+    @@index([userId])
+    @@map("plan_thread_item_votes")
+}
+
+// One selected item per thread (can be from search or manually provided)
+model PlanThreadSelectedItem {
+    id                 String             @id @default(cuid())
+    threadId           String             @unique
+    threadSearchItemId String?            @unique // Unique so each search item can only be selected once
+    selectedBy         String
+    isGroupDecision    Boolean            @default(false)
+    confirmationStatus ConfirmationStatus @default(PENDING)
+    votingCompletedAt  DateTime?
+    notes              String?
+    customData         Json?
+    createdAt          DateTime           @default(now())
+    updatedAt          DateTime           @updatedAt
+
+    thread   PlanThread            @relation(fields: [threadId], references: [id], onDelete: Cascade)
+    item     PlanThreadSearchItem? @relation(fields: [threadSearchItemId], references: [id], onDelete: SetNull)
+    selector User                  @relation(fields: [selectedBy], references: [id], onDelete: Cascade)
+
+    @@index([selectedBy])
+    @@map("plan_thread_selected_items")
+}
+
+// Optional: Multiple confirmed itinerary items per thread (use this if you want checklist functionality)
+model PlanThreadItineraryItem {
+    id              String            @id @default(cuid())
+    threadId        String
+    itemType        ItineraryItemType @default(FROM_SEARCH)
+    title           String
+    description     String?
+    url             String?
+    phone           String?
+    address         String?
+    price           Decimal?
+    priceCurrency   String?
+    reservationInfo Json?
+    status          ItineraryStatus   @default(PLANNED)
+    addedBy         String
+    position        Int               @default(0)
+    createdAt       DateTime          @default(now())
+    updatedAt       DateTime          @updatedAt
+
+    thread      PlanThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+    addedByUser User       @relation(fields: [addedBy], references: [id], onDelete: Cascade)
+
+    @@index([threadId])
+    @@index([addedBy])
+    @@index([position])
+    @@map("plan_thread_itinerary_items")
+}
+
 // Beta Signup Management
 model BetaSignup {
     id        String   @id @default(cuid())
@@ -526,18 +897,18 @@ model BetaSignup {
 // They are defined here so Prisma is aware of them and won't try to drop them.
 
 model WebCrawlerVenue {
-    id            BigInt                                @id @default(autoincrement())
+    id            BigInt                                    @id @default(autoincrement())
     name          String?
-    streetAddress String?                               @map("street_address")
+    streetAddress String?                                   @map("street_address")
     locality      String?
     region        String?
-    postalCode    String?                               @map("postal_code")
+    postalCode    String?                                   @map("postal_code")
     country       String?
     lat           Float?
     lon           Float?
-    createdAt     DateTime                              @default(now()) @map("created_at")
+    createdAt     DateTime                                  @default(now()) @map("created_at")
     location      Unsupported("gis.geography(Point,4326)")? // PostGIS geography type
-    searchVector  Unsupported("tsvector")?              @map("search_vector")
+    searchVector  Unsupported("tsvector")?                  @map("search_vector")
 
     // Relations
     events WebCrawlerEvent[]
