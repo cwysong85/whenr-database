@@ -639,10 +639,42 @@ model Plan {
     invites      PlanInvite[]
     threads      PlanThread[]
     chatMessages PlanChatMessage[]
+    wizardState  PlanWizardState?
 
     @@index([ownerId])
     @@index([eventSource, eventSourceId])
     @@map("plans")
+}
+
+enum PlanWizardMode {
+    EVENT
+    MANUAL
+}
+
+enum PlanWizardStep {
+    MODE
+    EVENT_SELECTION
+    DATES
+    TRANSPORTATION
+    LODGING
+    DINING
+    SUMMARY
+    COMPLETE
+}
+
+model PlanWizardState {
+    id             String           @id @default(cuid())
+    planId         String           @unique
+    mode           PlanWizardMode
+    currentStep    PlanWizardStep?
+    completedSteps PlanWizardStep[]
+    responses      Json?
+    createdAt      DateTime         @default(now())
+    updatedAt      DateTime         @updatedAt
+
+    plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+    @@map("plan_wizard_states")
 }
 
 model PlanMember {
