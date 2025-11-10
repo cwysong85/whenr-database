@@ -922,6 +922,20 @@ model BetaSignup {
     @@map("beta_signups")
 }
 
+/// Cached images for city locations used throughout the planner experience
+model CityPhoto {
+    id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+    cityName         String   @map("city_name")
+    state            String
+    photoBytes       Bytes    @map("photo_bytes")
+    photoAttribution String?  @map("photo_attribution")
+    placeId          String?  @map("place_id")
+    fetchedAt        DateTime @default(now()) @map("fetched_at")
+
+    @@unique([cityName, state], map: "city_photos_city_state_key")
+    @@map("city_photos")
+}
+
 // ============================================================================
 // WEB CRAWLER TABLES (Managed externally - DO NOT DROP)
 // ============================================================================
